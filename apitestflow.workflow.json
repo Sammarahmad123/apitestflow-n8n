@@ -1,0 +1,165 @@
+{
+  "name": "apitestflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/webhook/github",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-20, -80],
+      "id": "GitHub Webhook"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/YOUR_USERNAME/YOUR_REPO/compare/{{$json[\"body\"][\"before\"]}}...{{$json[\"body\"][\"after\"]}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env[\"GITHUB_TOKEN\"]}}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3+json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [200, -80],
+      "id": "Get Commit SHA"
+    },
+    {
+      "parameters": {
+        "command": "=cd \"{{$env[\"LOCAL_REPO_PATH\"]}}\" && echo \"Directory found.\" && git pull && git diff"
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [420, -80],
+      "id": "Update Local Repo & Git Diff"
+    },
+    {
+      "parameters": {
+        "jsCode": "const diffOutput = $input.first().json.stdout\n\nconst changedFiles = [];\nconst regex = /^ (.+?) \\|/gm;\nlet match;\n\nwhile ((match = regex.exec(diffOutput)) !== null) {\n  changedFiles.push(match[1].trim());\n}\n\nreturn changedFiles.map(file => {\n  return {\n    json: {\n      filePath: file\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, -80],
+      "id": "Identify Changed Components"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/YOUR_USERNAME/YOUR_REPO/compare/{{ $('GitHub Webhook').item.json.body.before }}...{{ $('GitHub Webhook').item.json.body.after }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env[\"GITHUB_TOKEN\"]}}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3.diff"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [860, -80],
+      "id": "Get Commit Diff"
+    },
+    {
+      "parameters": {
+        "command": "powershell -Command \"Get-ChildItem -Recurse -Filter *.java -Path '{{$env[\"LOCAL_REPO_PATH\"]}}\\src\\test' | ForEach-Object { '=== ' + $_.FullName + ' ==='; Get-Content $_.FullName }\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1080, -80],
+      "id": "Read Existing Tests"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputs = $input.all();\n\nconst diff = inputs.find(i => i.json?.data)?.json.data || '';\nconst tests = inputs.find(i => i.json?.stdout)?.json.stdout || '';\n\nreturn [\n  {\n    json: {\n      diff,\n      tests,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, -80],
+      "id": "Merger Node"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are generating test classes for a Java Spring Boot project.\n\nUse the following diff (code changes) and existing test code to determine:\n1. Which test classes or methods need to be created or updated.\n2. Then, generate complete, merge-ready test classes in Java — including:\n   - Correct imports\n   - Full class annotations (`@SpringBootTest`, `@MockBean`, etc.)\n   - Dependency injections using Spring annotations\n   - Valid method bodies\n   - Proper assertions (preferably with Junit)\n   - No missing variables, context, or methods\n\nMake sure the test file is self-contained and ready to compile in a standard Spring Boot Maven/Gradle project.\n\nRespond only with Java code blocks and file names where each test should go.\n\nHere’s the input::\n{{ $json.text }}\n",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [1896, -80],
+      "id": "Generate Test Code"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Here is a diff of the recent code changes and the existing test code. Based on this, identify whether the current tests cover the changes. If not, generate new test cases or suggest updates to existing ones.\n\nDiff:\n\n{{ $json.diff }}\n\nTests:\n\n{{ $json.tests }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [1520, -80],
+      "id": "Test Coverage Analysis"
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [
+        [{ "node": "Get Commit SHA", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Commit SHA": {
+      "main": [
+        [{ "node": "Update Local Repo & Git Diff", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Local Repo & Git Diff": {
+      "main": [
+        [{ "node": "Identify Changed Components", "type": "main", "index": 0 }]
+      ]
+    },
+    "Identify Changed Components": {
+      "main": [
+        [{ "node": "Get Commit Diff", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Commit Diff": {
+      "main": [
+        [{ "node": "Read Existing Tests", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Existing Tests": {
+      "main": [
+        [{ "node": "Merger Node", "type": "main", "index": 0 }]
+      ]
+    },
+    "Merger Node": {
+      "main": [
+        [{ "node": "Test Coverage Analysis", "type": "main", "index": 0 }]
+      ]
+    },
+    "Test Coverage Analysis": {
+      "main": [
+        [{ "node": "Generate Test Code", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
